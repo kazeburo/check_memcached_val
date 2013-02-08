@@ -18,13 +18,13 @@ my $timeout = 10;
 
 sub usage {
     print <<EOF;
-usage: $0 -H host -P port -w 1000 -c 360 -t 10 -k getkey
--H host
--P port. default 11211
--w Warning threshold
--c Critical threshold
--t Seconds before connection times out. defined 11211
--k key name for retrieve
+usage: $0 -H host -P port -w 0.1 -c 0.2 -t 10 -k getkey
+    -H host
+    -P port. default 11211
+    -w Warning threshold ( alert if larger than this )
+    -c Critical threshold
+    -t Seconds before connection times out.
+    -k key name for retrieve
 EOF
     exit 3;
 }
