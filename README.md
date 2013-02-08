@@ -13,3 +13,10 @@ usage
     -c Critical threshold
     -t Seconds before connection times out. defined 11211
     -k key name for retrieve
+
+LICENSE
+=======
+
+Copyright (C) Masahiro Nagano
+
+This library is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
