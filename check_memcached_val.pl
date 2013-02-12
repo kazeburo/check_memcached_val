@@ -9,20 +9,33 @@ use Scalar::Util qw/ looks_like_number /;
 use Getopt::Long;
 Getopt::Long::Configure ("no_ignore_case");
 
+use constant OUTSIDE => 0;
+use constant INSIDE => 1;
+
+# copy from Nagios::Plugin
+my $value_n = qr/[-+]?[\d\.]+/;
+my $value_re = qr/$value_n(?:e$value_n)?/;
+
 my $host;
 my $port = 11211;
-my $warning = 0;
-my $critical = 0;
+my $warning_arg = 0;
+my $critical_arg = 0;
 my $key;
 my $timeout = 10;
+my $regex;
+my $regexi;
+my $estring;
 
 sub usage {
     print <<EOF;
 usage: $0 -H host -P port -w 0.1 -c 0.2 -t 10 -k getkey
     -H host
     -P port. default 11211
-    -w Warning threshold ( alert if larger than this )
-    -c Critical threshold
+    -s Return OK state if STRING is an exact match
+    -r Return OK state if extended regular expression REGEX matches
+    -R Return OK state if case-insensitive extended REGEX matches
+    -w Warning threshold range(s)
+    -c Critical threshold range(s)
     -t Seconds before connection times out.
     -k key name for retrieve
 EOF
@@ -30,16 +43,31 @@ EOF
 }
 
 GetOptions(
-    "h"   => \my $help,
-    "H=s" => \$host,
-    "P=i" => \$port,
-    "w=i" => \$warning,
-    "c=i" => \$critical,
-    "k=s" => \$key,
-    "t=i" => \$timeout,
+    "h|help"   => \my $help,
+    "H|hostname=s" => \$host,
+    "P|port=i" => \$port,
+    "w|warning=s" => \$warning_arg,
+    "c|critical=s" => \$critical_arg,
+    "k|key=s" => \$key,
+    "t|timeout=i" => \$timeout,
+    "s|string=s" => \$estring,
+    "r|ereg=s" => \$regex,
+    "R|eregi=s" => \$regexi
 ) or usage();
 usage() if !$host || !$key;
 usage() if $help;
+
+my $warning = parse_range_string($warning_arg);
+if ( !$warning ) {
+    print "CRITICAL: invalid range definition '$warning_arg'\n";
+    exit 2;    
+}
+my $critical = parse_range_string($critical_arg);
+if ( !$critical ) {
+    print "CRITICAL: invalid range definition '$critical_arg'\n";
+    exit 2;    
+}
+
 
 my $client;
 eval {
@@ -47,13 +75,13 @@ eval {
 };
 
 if ( $@ ) {
-    print "Critical: $@";
+    print "CRITICAL: $@";
     exit 2;
 }
 
 my $write_len = write_all($client, "get $key\r\n", $timeout);
 if ( ! defined $write_len ) {
-    print "Critical: Failed to request\n";
+    print "CRITICAL: Failed to request\n";
     exit 2;
 }
 my $buf = '';
@@ -64,7 +92,7 @@ while (1) {
 }
 
 if ( !$buf ) {
-    print "Critical: could not retrieve any data from server\n";
+    print "CRITICAL: could not retrieve any data from server\n";
     exit 2;
 }
 
@@ -82,31 +110,67 @@ if ( $buf =~ m!
 }
 elsif ( $buf =~ m!ERROR\r\n$!mos ) {
     # error?
-    print "Unkown: server returns error\n";
+    print "UNKNOWN: server returns error\n";
     exit 3;
 }
 else {
     # not found
-    print "Critical: Key:$key is not found on this server \n";
+    print "CRITICAL: Key:$key is not found on this server \n";
     exit 2;
 }
 
+# string check
+if ( defined $estring ) {
+    if ( $val eq $estring ) {
+        printf "OK MATCH: *%s\n", $val;
+        exit 0;
+    }
+    else {
+        printf "CRTICAL NOT MATCH: *%s\n", $val;
+        exit 2;
+    }
+}
+# regex check
+if ( defined $regex ) {
+    if ( $val =~ m!$regex! ) {
+        printf "OK MATCH: *%s\n", $val;
+        exit 0;
+    }
+    else {
+        printf "CRTICAL NOT MATCH: *%s\n", $val;
+        exit 2;
+    }
+}
+# incase regex check
+if ( defined $regexi ) {
+    if ( $val =~ m!$regexi!i ) {
+        printf "OK MATCH: *%s\n", $val;
+        exit 0;
+    }
+    else {
+        printf "CRTICAL NOT MATCH: *%s\n", $val;
+        exit 2;
+    }
+}
+
+
+# range check
 if ( ! looks_like_number($val) ) {
-    printf "Unkown: Key:%s Value:%s was not look like number \n", $key, $val;
+    printf "UNKNOWN: Key:%s *%s was not look like number \n", $key, $val;
     exit 3;    
 }
 
-if ( $val > $critical ) {
-    printf "Critical: Key:%s Value:%d was larger than %s \n", $key, $val, $critical;
+if ( check_range($critical, $val) ) {
+    printf "CRITICAL: Key:%s *%d\n", $key, $val;
     exit 2;
 }
 
-if ( $val > $warning ) {
-    printf "Warning: Key:%s Value:%d was larger than %s \n", $key, $val, $warning;
+if ( check_range($warning, $val) ) {
+    printf "WARNING: Key:%s *%d\n", $key, $val;
     exit 1;
 }
 
-printf "OK: Value:%d\n", $val;
+printf "OK: *%d\n", $val;
 exit 0;
 
 sub new_client {
@@ -184,3 +248,90 @@ sub do_io {
     }
     goto DO_READWRITE;
 }
+
+# copy from Nagios::Plugin
+sub parse_range_string {
+    my ($string) = @_;
+    my $valid = 0;
+    my %range = (
+        start => 0, 
+        start_infinity => 0,
+        end => 0,
+        end_infinity => 1,
+        alert_on => OUTSIDE
+    );
+    $string =~ s/\s//g;  # strip out any whitespace
+    # check for valid range definition
+    unless ( $string =~ /[\d~]/ && $string =~ m/^\@?($value_re|~)?(:($value_re)?)?$/ ) {
+        return;
+    }
+
+    if ($string =~ s/^\@//) {
+        $range{alert_on} = INSIDE;
+    }
+
+    if ($string =~ s/^~//) {  # '~:x'
+        $range{start_infinity} = 1;
+    }
+    if ( $string =~ m/^($value_re)?:/ ) {     # '10:'
+       my $start = $1;
+       if ( defined $start ) {
+           $range{start} = $start + 0;
+           $range{start_infinity} = 0;
+       }
+       $range{end_infinity} = 1;  # overridden below if there's an end specified
+       $string =~ s/^($value_re)?://;
+       $valid++;
+   }
+    if ($string =~ /^($value_re)$/) {   # 'x:10' or '10'
+        $range{end} = $string + 0;
+        $range{end_infinity} = 0;
+        $valid++;
+    }
+
+    if ($valid && ( $range{start_infinity} == 1 
+                 || $range{end_infinity} == 1 
+                 || $range{start} <= $range{end}
+                 )) {
+        return \%range;
+    }
+
+    return;
+}
+
+# Returns 1 if an alert should be raised, otherwise 0
+sub check_range {
+    my ($range, $value) = @_;
+    my $false = 0;
+    my $true = 1;
+    if ($range->{alert_on} == INSIDE) {
+        $false = 1;
+        $true = 0;
+    }
+    if ($range->{end_infinity} == 0 && $range->{start_infinity} == 0) {
+        if ($range->{start} <= $value && $value <= $range->{end}) {
+            return $false;
+        }
+        else {
+            return $true;
+        }
+    }
+    elsif ($range->{start_infinity} == 0 && $range->{end_infinity} == 1) {
+        if ( $value >= $range->{start} ) {
+            return $false;
+        }
+        else {
+            return $true;
+        }
+    }
+    elsif ($range->{start_infinity} == 1 && $range->{end_infinity} == 0) {
+        if ($value <= $range->{end}) {
+            return $false;
+        }
+        else {
+            return $true;
+        }
+    }
+    return $false;
+}
+
