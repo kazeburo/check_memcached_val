@@ -5,7 +5,7 @@ use warnings;
 use 5.008005;
 use File::Temp qw/tempfile/;
 use File::Spec;
-use File::Path qw/make_path/;
+use File::Path qw/mkpath/;
 use File::Copy;
 use Data::Dumper;
 use Digest::MD5 qw/md5_hex/;
@@ -73,7 +73,7 @@ my $prevfile = md5_hex(Dumper(
     [$host,$port,$warning_arg,$critical_arg,$key,$timeout,$estring,$regex,$regexi,$invert_search,$rate]
 ));
 if ($rate) {
-    make_path($tmpdir);
+    mkpath($tmpdir);
 }
 
 my $client;
