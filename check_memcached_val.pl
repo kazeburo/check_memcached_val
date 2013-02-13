@@ -52,7 +52,7 @@ GetOptions(
     "R|eregi=s" => \$regexi,
     "invert-search" => \my $invert_search,
     "rate" => \my $rate,
-    "rate-multiplier" => \$rate_multiplier
+    "rate-multiplier=i" => \$rate_multiplier
 ) or pod2usage(-verbose=>1,-exitval=>UNKNOWN);
 pod2usage(-verbose=>1,-exitval=>CRITICAL) if !$host || !$key;
 pod2usage(-verbose=>2,-exitval=>OK) if $help;
@@ -454,7 +454,7 @@ Seconds before connection times out.
 
 Enable rate calculation. See 'Rate Calculation' below
 
-=item --rate-multiplier
+=item --rate-multiplier=INTEGER
 
 Converts rate per second. For example, set to 60 to convert to per minute
 
